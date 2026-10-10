@@ -4,9 +4,11 @@ import asyncio
 import argparse
 import os
 import sys
+import tempfile
 from typing import Tuple
 import pyppeteer
 
+from services.browser import TOOLS_DIR, ensure_browser
 from services.alive import keepalive
 from services.upload import upload_file
 from services.extract import extract_credentials
@@ -14,7 +16,6 @@ from utilities.fs import (
 	Config,
 	concrete_read_config,
 	read_config,
-	write_config,
 	write_default_config,
 	save_credentials,
 )
@@ -36,17 +37,7 @@ from utilities.etc import (
 	delete_default,
 )
 
-default_installs = [
-	"C:/Program Files/Google/Chrome/Application/chrome.exe",
-	"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-	"C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
-	"C:/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe",
-	"C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-	"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-]
 args = [
-	"--no-sandbox",
-	"--disable-setuid-sandbox",
 	"--disable-infobars",
 	"--window-position=0,0",
 	"--ignore-certificate-errors",
@@ -100,7 +91,6 @@ console_args = parser.parse_args([])
 def setup(require_browser: bool = True) -> Tuple[str, Config]:
 	"""Sets up the configs so everything runs smoothly."""
 
-	executable_path = ""
 	config = read_config()
 
 	if config is None:
@@ -108,31 +98,7 @@ def setup(require_browser: bool = True) -> Tuple[str, Config]:
 		config = concrete_read_config()
 	if not require_browser:
 		return "", config
-	executable_path = config.executablePath
-	if not os.path.isfile(executable_path):
-		executable_path = next(
-			(path for path in default_installs if os.path.isfile(path)), ""
-		)
-		if executable_path:
-			write_config("executablePath", executable_path, config)
-
-	# If no Chromium based browser is found, ask the user for the path to one.
-	if not executable_path:
-		p_print(
-			"Failed to find a Chromium based browser. Please make sure you have one installed.",
-			Colours.FAIL,
-		)
-		executable_path = input(
-			"Please enter the path to a Chromium based browser's executable: "
-		)
-		if os.path.exists(executable_path):
-			p_print("Found executable!", Colours.OKGREEN)
-			write_config("executablePath", executable_path, config)
-		else:
-			p_print("Failed to find executable!", Colours.FAIL)
-			sys.exit(1)
-
-	return executable_path, config
+	return str(ensure_browser()), config
 
 
 def upload_size(file: str) -> int:
@@ -156,57 +122,61 @@ def loop_registrations(loop_count: int, executable_path: str, config: Config):
 
 async def register(credentials: Credentials, executable_path: str, config: Config):
 	"""Registers and verifies mega.nz account."""
-	browser = await pyppeteer.launch(
-		{
-			"headless": True,
-			"ignoreHTTPSErrors": True,
-			"args": args,
-			"executablePath": executable_path,
-			"autoClose": False,
-			"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
-		}
-	)
-
-	try:
-		context = await browser.createIncognitoBrowserContext()
-		page = await context.newPage()
-
-		await type_name(page, credentials)
-		await type_password(page, credentials)
-		await finish_form(page, credentials)
-		mail = await mail_login(credentials)
-
-		await asyncio.sleep(1.5)
-		message = await get_mail(mail)
-
-		confirm_page = await initial_setup(context, message, credentials)
-		await asyncio.sleep(0.5)
-
-		p_print("Verified account.", Colours.OKGREEN)
-		p_print(
-			f"Email: {credentials.email}\nPassword: {credentials.password}",
-			Colours.OKCYAN,
+	TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+	with tempfile.TemporaryDirectory(dir=TOOLS_DIR, prefix="browser-profile-") as profile:
+		browser = await pyppeteer.launch(
+			{
+				"headless": True,
+				"ignoreHTTPSErrors": True,
+				"args": args,
+				"executablePath": executable_path,
+				"userDataDir": profile,
+				"autoClose": False,
+				"ignoreDefaultArgs": ["--enable-automation", "--disable-extensions"],
+			}
 		)
+		try:
+			context = await browser.createIncognitoBrowserContext()
+			page = await context.newPage()
 
-		save_credentials(credentials, config.accountFormat)
-		delete_default(credentials)
+			await type_name(page, credentials)
+			await type_password(page, credentials)
+			await finish_form(page, credentials)
+			mail = await mail_login(credentials)
 
-		if console_args.file is not None:
-			try:
-				file_size = upload_size(console_args.file)
-			except ValueError as exc:
-				p_print(str(exc), Colours.FAIL)
-				sys.exit(1)
-			else:
-				if file_size >= 5e9:
-					p_print(
-						"File is larger than 5GB, mega.nz limits traffic to 5GB per IP.",
-						Colours.WARNING,
-					)
-				if not await upload_file(console_args.public, console_args.file, credentials, confirm_page):
+			await asyncio.sleep(1.5)
+			message = await get_mail(mail)
+
+			confirm_page = await initial_setup(context, message, credentials)
+			await asyncio.sleep(0.5)
+
+			p_print("Verified account.", Colours.OKGREEN)
+			p_print(
+				f"Email: {credentials.email}\nPassword: {credentials.password}",
+				Colours.OKCYAN,
+			)
+
+			save_credentials(credentials, config.accountFormat)
+			delete_default(credentials)
+
+			if console_args.file is not None:
+				try:
+					file_size = upload_size(console_args.file)
+				except ValueError as exc:
+					p_print(str(exc), Colours.FAIL)
 					sys.exit(1)
-	finally:
-		await browser.close()
+				else:
+					if file_size >= 5e9:
+						p_print(
+							"File is larger than 5GB, mega.nz limits traffic to 5GB per IP.",
+							Colours.WARNING,
+						)
+					if not await upload_file(console_args.public, console_args.file, credentials, confirm_page):
+						sys.exit(1)
+		finally:
+			await browser.close()
+			if browser.process is not None:
+				await asyncio.to_thread(browser.process.wait, timeout=15)
 	if console_args.loop is None or console_args.loop <= 1:
 		sys.exit(0)
 

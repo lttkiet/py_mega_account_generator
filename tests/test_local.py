@@ -1,9 +1,12 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import hashlib
 import io
 import json
-from zipfile import ZipFile
+from threading import Barrier
+import time
+from zipfile import ZipFile, ZipInfo
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -13,7 +16,7 @@ import pytest
 from mega.errors import RequestError
 
 import main
-from services import alive, extract, file_tracker, rclone_config, upload
+from services import alive, browser, extract, file_tracker, rclone_config, upload
 from utilities import etc, fs
 from utilities.types import Config, Credentials
 
@@ -266,24 +269,16 @@ def test_welcome_cleanup_only_deletes_welcome_pdf(monkeypatch):
 def test_setup_and_upload_size(isolated, monkeypatch):
 	browser = isolated / "browser.exe"
 	browser.write_bytes(b"browser")
-	monkeypatch.setattr(main, "default_installs", [str(browser)])
+	monkeypatch.setattr(main, "ensure_browser", lambda: browser)
 	path, config = main.setup()
 	assert path == str(browser)
-	assert config.executablePath == path
 	assert main.setup(require_browser=False)[0] == ""
 	file = isolated / "sample.txt"
 	with pytest.raises(ValueError):
 		main.upload_size(str(file))
-	monkeypatch.setattr(main, "default_installs", [])
-	monkeypatch.setattr("builtins.input", lambda prompt: str(browser))
-	config.executablePath = ""
-	fs.write_config("executablePath", "", config)
+	config.executablePath = "C:/Program Files/Google/Chrome/Application/chrome.exe"
+	fs.write_config("executablePath", config.executablePath, config)
 	assert main.setup()[0] == str(browser)
-	monkeypatch.setattr("builtins.input", lambda prompt: "missing-browser")
-	fs.write_config("executablePath", "", config)
-	with pytest.raises(SystemExit) as result:
-		main.setup()
-	assert result.value.code == 1
 	file.write_bytes(b"")
 	with pytest.raises(ValueError):
 		main.upload_size(str(file))
@@ -292,6 +287,76 @@ def test_setup_and_upload_size(isolated, monkeypatch):
 	monkeypatch.setattr(main.os.path, "getsize", lambda path: 20_000_000_000)
 	with pytest.raises(ValueError):
 		main.upload_size(str(file))
+
+
+def test_managed_browser_install_and_cache(tmp_path, monkeypatch):
+	tools = tmp_path / "tools"
+	monkeypatch.setattr(browser, "TOOLS_DIR", tools)
+	monkeypatch.setattr(browser, "BROWSER_DIR", tools / "browser")
+	monkeypatch.setattr(browser, "_platform", lambda: "win64")
+	archive_bytes = io.BytesIO()
+	with ZipFile(archive_bytes, "w") as archive:
+		archive.writestr("chrome-win64/chrome.exe", b"browser")
+	version = "155.0.8059.39"
+	url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/win64/chrome-win64.zip"
+	metadata = {"channels": {"Stable": {"version": version, "downloads": {"chrome": [{"platform": "win64", "url": url}]}}}}
+	calls = []
+
+	def open_download(address, timeout):
+		calls.append(address)
+		return io.BytesIO(json.dumps(metadata).encode() if address == browser.VERSIONS_URL else archive_bytes.getvalue())
+
+	monkeypatch.setattr(browser, "_open", open_download)
+	executable = browser.ensure_browser()
+	assert executable.read_bytes() == b"browser"
+	assert browser.ensure_browser() == executable
+	assert calls == [browser.VERSIONS_URL, url]
+
+
+def test_managed_browser_concurrent_install(tmp_path, monkeypatch):
+	tools = tmp_path / "tools"
+	monkeypatch.setattr(browser, "TOOLS_DIR", tools)
+	monkeypatch.setattr(browser, "BROWSER_DIR", tools / "browser")
+	monkeypatch.setattr(browser, "_platform", lambda: "win64")
+	archive_bytes = io.BytesIO()
+	with ZipFile(archive_bytes, "w") as archive:
+		archive.writestr("chrome-win64/chrome.exe", b"browser")
+	version = "155.0.8059.39"
+	url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/win64/chrome-win64.zip"
+	metadata = {"channels": {"Stable": {"version": version, "downloads": {"chrome": [{"platform": "win64", "url": url}]}}}}
+	calls = []
+
+	def open_download(address, timeout):
+		calls.append(address)
+		if address == browser.VERSIONS_URL:
+			time.sleep(0.1)
+		return io.BytesIO(json.dumps(metadata).encode() if address == browser.VERSIONS_URL else archive_bytes.getvalue())
+
+	monkeypatch.setattr(browser, "_open", open_download)
+	start = Barrier(2)
+
+	def run():
+		start.wait()
+		return browser.ensure_browser()
+
+	with ThreadPoolExecutor(max_workers=2) as pool:
+		results = list(pool.map(lambda _: run(), range(2)))
+	assert results == [tools / "browser" / "chrome.exe"] * 2
+	assert calls == [browser.VERSIONS_URL, url]
+
+
+def test_managed_browser_restores_helper_modes(tmp_path, monkeypatch):
+	archive_bytes = io.BytesIO()
+	with ZipFile(archive_bytes, "w") as archive:
+		for name, mode in (("chrome-linux64/chrome", 0o755), ("chrome-linux64/chrome_crashpad_handler", 0o755), ("chrome-linux64/resources.pak", 0o644)):
+			member = ZipInfo(name)
+			member.external_attr = (0o100000 | mode) << 16
+			archive.writestr(member, b"file")
+	changed = []
+	monkeypatch.setattr(Path, "chmod", lambda self, mode: changed.append((self.name, mode)))
+	with ZipFile(io.BytesIO(archive_bytes.getvalue())) as archive:
+		browser._restore_executable_modes(archive, tmp_path)
+	assert changed == [("chrome", 0o755), ("chrome_crashpad_handler", 0o755)]
 
 
 def test_config_missing_paths(monkeypatch, capsys):

@@ -4,7 +4,7 @@ Generate MEGA accounts with a single command, upload files, get shareable links 
 
 ## Instructions
 
-These instructions assume you have [Git](https://git-scm.com/downloads) and [Python **3.10**](https://www.python.org/downloads/release/python-31011/) installed. The tool downloads rclone into its own `tools` folder when needed. If you do not have Git installed, download the project from [here](https://github.com/qtchaos/py_mega_account_generator/archive/refs/heads/master.zip) and skip the first step below.
+These instructions assume you have [Git](https://git-scm.com/downloads) and [Python **3.10**](https://www.python.org/downloads/release/python-31011/) installed. The tool downloads Chrome for Testing and rclone into its own `tools` folder when needed. Browser sessions use temporary profiles inside that folder and remove them when the session ends. If you do not have Git installed, download the project from [here](https://github.com/qtchaos/py_mega_account_generator/archive/refs/heads/master.zip) and skip the first step below.
 
 ```
 git clone https://github.com/qtchaos/py_mega_account_generator.git
