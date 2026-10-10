@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pyppeteer.errors import TimeoutError as BrowserTimeout
-from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
+from pymailtm.pymailtm import CouldNotGetAccountException
+from requests.exceptions import RequestException
 
 from utilities import web
 from utilities.types import Config, Credentials
@@ -63,7 +64,7 @@ def test_mail_login_retries(monkeypatch):
 def test_get_mail_retries_and_times_out(monkeypatch):
 	message = object()
 	mail = Mock()
-	mail.get_messages.side_effect = [[], CouldNotGetMessagesException(), [message]]
+	mail.get_messages.side_effect = [[], RequestException(), [message]]
 	sleep = AsyncMock()
 	monkeypatch.setattr(web.asyncio, "sleep", sleep)
 	assert asyncio.run(web.get_mail(mail)) is message
@@ -126,3 +127,8 @@ def test_share_consent_only_when_warning_visible():
 	assert "Copyright warning to all users" in page.evaluate.await_args_list[3].args[0]
 	page.waitForFunction.side_effect = BrowserTimeout("warning absent")
 	assert asyncio.run(web.accept_share_consent(page, "upload.txt")) is False
+	page.url = "https://mega.nz/fm/abc"
+	page.goto.reset_mock()
+	page.waitForFunction.side_effect = BrowserTimeout("warning absent")
+	assert asyncio.run(web.accept_share_consent(page, "upload.txt")) is False
+	page.goto.assert_not_awaited()

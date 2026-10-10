@@ -3,6 +3,7 @@
 import asyncio
 import argparse
 import os
+import platform
 import sys
 import tempfile
 from typing import Tuple
@@ -84,6 +85,11 @@ parser.add_argument(
 	help="Loops the program for a specified amount of times.",
 	type=int,
 )
+parser.add_argument(
+	"--no-sandbox",
+	action="store_true",
+	help="Disable Chrome's sandbox on Linux when the host blocks it.",
+)
 
 console_args = parser.parse_args([])
 
@@ -124,11 +130,14 @@ async def register(credentials: Credentials, executable_path: str, config: Confi
 	"""Registers and verifies mega.nz account."""
 	TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 	with tempfile.TemporaryDirectory(dir=TOOLS_DIR, prefix="browser-profile-") as profile:
+		launch_args = args.copy()
+		if platform.system() == "Linux" and getattr(console_args, "no_sandbox", False):
+			launch_args.append("--no-sandbox")
 		browser = await pyppeteer.launch(
 			{
 				"headless": True,
 				"ignoreHTTPSErrors": True,
-				"args": args,
+				"args": launch_args,
 				"executablePath": executable_path,
 				"userDataDir": profile,
 				"autoClose": False,

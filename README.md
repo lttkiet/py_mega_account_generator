@@ -13,6 +13,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+On Linux, Chrome for Testing may fail with `No usable sandbox!` when AppArmor blocks its user namespace sandbox. Configure an AppArmor policy that permits Chrome for Testing to use user namespaces to keep the browser sandbox enabled. If that is not possible and you trust the pages opened by this program, run `python main.py --no-sandbox` (with any other arguments you need). This disables Chrome's sandbox for that run. See [Puppeteer's Linux sandbox troubleshooting](https://pptr.dev/troubleshooting#setting-up-chrome-linux-sandbox) for the AppArmor details and other sandbox options.
+
 ## Usage
 
 > [!NOTE]
@@ -55,6 +57,7 @@ If you change the `accountFormat` variable to `""`, then it will use the default
 `-f filename, --file filename` | Uploads a file to the generated account.\
 `-p, --public` | Generates a shareable link to the file. \
 `-l int, --loop int` | Loops the script x amount of times.
+`--no-sandbox` | Disables Chrome's sandbox on Linux when the host blocks it.
 
 ### Services
 

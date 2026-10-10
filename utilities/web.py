@@ -8,9 +8,10 @@ import secrets
 import pymailtm
 from faker import Faker
 
-from pymailtm.pymailtm import CouldNotGetAccountException, CouldNotGetMessagesException
+from pymailtm.pymailtm import CouldNotGetAccountException
 import pyppeteer
 import pyppeteer.page
+from requests.exceptions import RequestException
 
 from utilities.etc import Credentials, p_print, Colours
 
@@ -62,7 +63,8 @@ async def accept_share_consent(page, file):
 	"""Accept MEGA's copyright warning for a newly uploaded file."""
 	name = os.path.basename(file)
 	try:
-		await page.goto("https://mega.nz/fm")
+		if not (isinstance(page.url, str) and page.url.startswith("https://mega.nz/fm")):
+			await page.goto("https://mega.nz/fm")
 		await page.waitForFunction(
 			"document.querySelector('tr.file') || document.body.innerText.includes('Later')",
 			timeout=60000,
@@ -141,7 +143,7 @@ async def get_mail(mail):
 			message = mail.get_messages()[0]
 			p_print("Found mail!", Colours.OKGREEN)
 			return message
-		except (IndexError, CouldNotGetMessagesException):
+		except (IndexError, RequestException):
 			if attempt == 0:
 				p_print("Waiting for confirmation email...", Colours.WARNING)
 			await asyncio.sleep(1.5)
