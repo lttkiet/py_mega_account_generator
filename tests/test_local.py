@@ -359,6 +359,40 @@ def test_managed_browser_restores_helper_modes(tmp_path, monkeypatch):
 	assert changed == [("chrome", 0o755), ("chrome_crashpad_handler", 0o755)]
 
 
+@pytest.mark.parametrize(
+	("system", "machine", "expected"),
+	[
+		("Windows", "AMD64", "win64"),
+		("Windows", "i686", "win32"),
+		("Linux", "x86_64", "linux64"),
+		("Linux", "aarch64", "linux-arm64"),
+		("Darwin", "arm64", "mac-arm64"),
+		("Darwin", "x86_64", "mac-x64"),
+	],
+)
+def test_browser_platform_and_executable(system, machine, expected, tmp_path, monkeypatch):
+	monkeypatch.setattr(browser.platform, "system", lambda: system)
+	monkeypatch.setattr(browser.platform, "machine", lambda: machine)
+	assert browser._platform() == expected
+	executable = browser._executable(tmp_path, expected)
+	assert executable.name == ("chrome.exe" if system == "Windows" else "Google Chrome for Testing" if system == "Darwin" else "chrome")
+	with pytest.raises(RuntimeError, match="not supported"):
+		monkeypatch.setattr(browser.platform, "system", lambda: "Other")
+		browser._platform()
+
+
+def test_download_openers_set_user_agent(monkeypatch):
+	response = object()
+	for module, opener in ((browser, browser._open), (rclone_config, rclone_config._open_download)):
+		urlopen = Mock(return_value=response)
+		monkeypatch.setattr(module, "urlopen", urlopen)
+		assert opener("https://example.com/archive.zip", 17) is response
+		request = urlopen.call_args.args[0]
+		assert request.full_url == "https://example.com/archive.zip"
+		assert request.get_header("User-agent") == "py-mega-account-generator/1.0"
+		assert urlopen.call_args.kwargs == {"timeout": 17}
+
+
 def test_config_missing_paths(monkeypatch, capsys):
 	monkeypatch.setattr(fs, "read_config", lambda: None)
 	with pytest.raises(SystemExit) as result:
@@ -373,6 +407,7 @@ def test_registration_orchestration(monkeypatch):
 	context = Mock()
 	context.newPage = AsyncMock(return_value=Mock())
 	browser = Mock()
+	browser.process = None
 	browser.createIncognitoBrowserContext = AsyncMock(return_value=context)
 	browser.close = AsyncMock()
 	monkeypatch.setattr(main.pyppeteer, "launch", AsyncMock(return_value=browser))
@@ -396,6 +431,29 @@ def test_registration_orchestration(monkeypatch):
 	assert browser.close.await_count == 2
 
 
+def test_linux_no_sandbox_launch_option(tmp_path, monkeypatch):
+	monkeypatch.setattr(main, "TOOLS_DIR", tmp_path / "tools")
+	monkeypatch.setattr(main.pyppeteer, "launch", AsyncMock(side_effect=RuntimeError("stop")))
+	assert main.parser.parse_args(["--no-sandbox"]).no_sandbox is True
+	monkeypatch.setattr(main, "console_args", main.parser.parse_args(["--no-sandbox"]))
+	monkeypatch.setattr(main.platform, "system", lambda: "Linux")
+	with pytest.raises(RuntimeError, match="stop"):
+		asyncio.run(main.register(Credentials(), "browser", Config()))
+	assert "--no-sandbox" in main.pyppeteer.launch.call_args.args[0]["args"]
+	assert "--no-sandbox" not in main.args
+
+	monkeypatch.setattr(main, "console_args", main.parser.parse_args([]))
+	with pytest.raises(RuntimeError, match="stop"):
+		asyncio.run(main.register(Credentials(), "browser", Config()))
+	assert "--no-sandbox" not in main.pyppeteer.launch.call_args.args[0]["args"]
+
+	monkeypatch.setattr(main, "console_args", main.parser.parse_args(["--no-sandbox"]))
+	monkeypatch.setattr(main.platform, "system", lambda: "Windows")
+	with pytest.raises(RuntimeError, match="stop"):
+		asyncio.run(main.register(Credentials(), "browser", Config()))
+	assert "--no-sandbox" not in main.pyppeteer.launch.call_args.args[0]["args"]
+
+
 def test_registration_loop(monkeypatch):
 	credentials = Credentials(email="a@example.com")
 	monkeypatch.setattr(main, "generate_mail", AsyncMock(return_value=credentials))
@@ -412,6 +470,7 @@ def test_registration_upload_branches(isolated, monkeypatch, capsys):
 	context = Mock()
 	context.newPage = AsyncMock(return_value=Mock())
 	browser = Mock()
+	browser.process = None
 	browser.createIncognitoBrowserContext = AsyncMock(return_value=context)
 	browser.close = AsyncMock()
 	monkeypatch.setattr(main.pyppeteer, "launch", AsyncMock(return_value=browser))
