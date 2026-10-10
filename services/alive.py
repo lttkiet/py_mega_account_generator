@@ -8,40 +8,41 @@ from mega.errors import RequestError
 
 from utilities.etc import p_print, Colours
 
-mega = Mega()
-
 
 def keepalive(verbose: bool):
 	"""Keep the generated accounts alive by logging in."""
 
-	files = os.listdir("./credentials")
-	if len(files) == 0:
+	if not os.path.isdir("./credentials"):
 		p_print(
 			"No credentials found, please remove all arguments and try again.",
 			Colours.FAIL,
 		)
 		return
+	files = sorted(file for file in os.listdir("./credentials") if file.endswith(".json"))
+	if not files:
+		p_print("No JSON credentials found.", Colours.FAIL)
+		return
 
-	i = 0
-	for file in files:
-		if file.endswith(".json"):
-			with open(f"./credentials/{file}", "r", encoding="utf-8") as f:
-				credentials = json.JSONDecoder().decode(f.read())
-				i += 1
-				try:
-					mega.login(credentials.get("email"), credentials.get("password"))
-					storage_left = mega.get_quota() / 1024
-					p_print(
-						f"{i}/{len(files)} Successfully logged into {credentials['email']}",
-						Colours.OKGREEN,
-					)
-					if verbose:
-						p_print(
-							f"    {storage_left}GB of storage left", Colours.OKGREEN
-						)
-				except RequestError:
-					p_print(
-						f"{i}/{len(files)} Failed to login to {credentials['email']}",
-						Colours.FAIL,
-					)
-					continue
+	for i, file in enumerate(files, start=1):
+		with open(os.path.join("credentials", file), "r", encoding="utf-8") as f:
+			try:
+				credentials = json.load(f)
+				email = credentials["email"]
+				password = credentials["password"]
+			except (json.JSONDecodeError, KeyError, TypeError):
+				p_print(f"{i}/{len(files)} Invalid credentials file: {file}", Colours.FAIL)
+				continue
+		mega = Mega()
+		try:
+			mega.login(email, password)
+		except RequestError:
+			p_print(f"{i}/{len(files)} Failed to login to {email}", Colours.FAIL)
+			continue
+		p_print(f"{i}/{len(files)} Successfully logged into {email}", Colours.OKGREEN)
+		if verbose:
+			try:
+				storage_left = mega.get_quota() / 1024
+			except RequestError:
+				p_print("    Could not retrieve storage quota", Colours.WARNING)
+			else:
+				p_print(f"    {storage_left}GB of storage left", Colours.OKGREEN)

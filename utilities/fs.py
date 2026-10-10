@@ -1,12 +1,14 @@
 """All functions related to working with the config file."""
 
 from dataclasses import asdict
+from hashlib import sha256
 import os
 import json
 import sys
 
 from utilities.etc import p_print
 from utilities.types import Colours, Credentials, Config
+from services.rclone_config import create_rclone_config
 
 CONFIG_FILE = "config.json"
 
@@ -24,14 +26,23 @@ def read_config() -> Config | None:
 			write_default_config()
 			return None
 		f.seek(0)
-		json_data = json.loads(f.read())
+		try:
+			json_data = json.loads(f.read())
+		except json.JSONDecodeError as exc:
+			raise ValueError("config.json contains invalid JSON.") from exc
+	if not isinstance(json_data, dict):
+		raise ValueError("config.json must contain a JSON object.")
 
-	for k, v in Config().__dict__.items():
-		if k not in json_data:
-			write_config(k, v, Config(**json_data))
-			json_data[k] = v
+	defaults = asdict(Config())
+	for key in defaults:
+		if key in json_data and not isinstance(json_data[key], str):
+			raise ValueError(f"config.json field {key} must be a string.")
+	config = Config(**{key: json_data.get(key, value) for key, value in defaults.items()})
+	if any(key not in json_data for key in defaults):
+		with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+			f.write(json.dumps(asdict(config), indent=4, sort_keys=True))
 
-	return Config(**json_data)
+	return config
 
 
 def concrete_read_config() -> Config:
@@ -53,6 +64,8 @@ def write_config(k: str, v: str, config: Config) -> None:
 
 	if config is None:
 		return
+	if k not in asdict(config):
+		raise KeyError(k)
 
 	with open(CONFIG_FILE, "w", encoding="utf-8") as f:
 		config[k] = v
@@ -75,6 +88,9 @@ def save_credentials(credentials: Credentials, account_format: str) -> None:
 	"""Pass credentials into a file."""
 	if not os.path.exists("credentials"):
 		os.mkdir("credentials")
+	filename = sha256(credentials.email.encode("utf-8")).hexdigest() + ".json"
+	with open(os.path.join("credentials", filename), "w", encoding="utf-8") as file:
+		file.write(json.dumps(asdict(credentials)))
 
 	if account_format != "":
 		account_format = (
@@ -86,12 +102,4 @@ def save_credentials(credentials: Credentials, account_format: str) -> None:
 
 		with open("credentials/accounts.txt", "a", encoding="utf-8") as file:
 			file.write(account_format)
-
-		return
-
-	with open(
-		f"credentials/{credentials.email[:-4]}.json", "w", encoding="utf-8"
-	) as file:
-		del credentials.id
-		json_file = json.dumps(asdict(credentials))
-		file.write(json_file)
+	create_rclone_config(credentials)

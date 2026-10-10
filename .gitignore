@@ -6,5 +6,13 @@ venv
 __pycache__
 config.json
 credentials.txt
+files.csv
+rclone.conf
+tools/
 .ruff_cache
 .mypy_cache
+.uv-cache
+.python
+.pytest_tmp
+.coverage
+.pytest_cache

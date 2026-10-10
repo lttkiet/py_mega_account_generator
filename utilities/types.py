@@ -23,9 +23,6 @@ class Credentials:
 	password: str = ""
 	id = ""
 
-	__delitem__ = dict.__delitem__
-	__getitem__ = dict.__getitem__
-
 
 @dataclass
 class Config:

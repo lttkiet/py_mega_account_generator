@@ -7,6 +7,10 @@ OUTPUT_FILE = "credentials.txt"
 
 
 def extract_credentials(account_format: str = "{email}#{password}"):
+	if not os.path.isdir(CREDENTIALS_FOLDER):
+		p_print("No credentials found.", Colours.WARNING)
+		return
+
 	with open(OUTPUT_FILE, "w") as output_file:
 		for file in os.listdir(CREDENTIALS_FOLDER):
 			file_path = os.path.join(CREDENTIALS_FOLDER, file)
