@@ -1,71 +1,147 @@
 # py_mega_account_generator
 
-Generate MEGA accounts with a single command, upload files, get shareable links and do all of that however many times you want with loops.
+Create a MEGA account, save its credentials, optionally upload a file, and list its cloud files with a project-local rclone binary.
 
-## Instructions
+## Prerequisites and installation
 
-These instructions assume you have [Git](https://git-scm.com/downloads) and [Python **3.10**](https://www.python.org/downloads/release/python-31011/) installed. The tool downloads Chrome for Testing and rclone into its own `tools` folder when needed. Browser sessions use temporary profiles inside that folder and remove them when the session ends. If you do not have Git installed, download the project from [here](https://github.com/qtchaos/py_mega_account_generator/archive/refs/heads/master.zip) and skip the first step below.
+- Python 3.10 or newer, Git, and internet access are required for the commands below. No Go or Node.js installation is needed.
+- Run commands from the repository root. The tool downloads Chrome for Testing into `tools/browser` before registration and rclone into `tools` when it saves the first account. You do not need to install either system-wide.
+- Windows is the tested path. The Ubuntu instructions below are an example for Linux; Chrome sandbox restrictions may prevent the project-local browser from starting on some Linux systems. macOS is currently out of scope.
 
+### Windows (PowerShell)
+
+Install prerequisites with [WinGet](https://learn.microsoft.com/windows/package-manager/winget/):
+
+```powershell
+winget install --id Python.Python.3.10 --exact
+winget install --id Git.Git --exact
 ```
-git clone https://github.com/qtchaos/py_mega_account_generator.git
+
+Open a new PowerShell window so `git` and `py` are available, then run:
+
+```powershell
+git clone https://github.com/lttkiet/py_mega_account_generator.git
 cd py_mega_account_generator
-pip install -r requirements.txt
-python main.py
+py -3.10 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Usage
+### Ubuntu 22.04 (APT)
 
-> [!NOTE]
-> The maximum upload size of a file is 20GB, since this is the limit on a free account.
-
-You can use this program without any arguments at all, this will spit out a new account with the welcome pdf deleted, it will show the login credentials in the console and create a new file in the credentials folder.
-If you want to upload a file though, you can use the following setup: `python main.py -f FILENAME -p`, this will upload the file to a new account and print out a publicly shareable link. Unfortunately, it seems that MEGA likes to purge accounts that haven't been logged into for a while, so if it has been a while since you started generating new accounts, you might want to run the keepalive service: `python main.py -ka -v`, this will login to every account and print out the storage used. And if you want to mass create accounts or upload files, then you can use the loop argument: `python main.py -p -f FILENAME -l TIMES_TO_LOOP`.
-
-If MEGA shows its first-time copyright warning during public-link creation, the program accepts it and retries the link. If MEGA still denies the link, the upload and account credentials remain saved for review.
-
-Every successful upload is added to `files.csv` in the project folder. The tracker records the filename, original path, upload time in UTC, and account email. Use the email to find that account's saved credentials. Repeated uploads get separate rows.
-
-Each saved account gets a remote in the project folder's `rclone.conf`. The tool uses rclone's current-version scripting download URL and verifies its SHA-256 checksum on the first account save, then reuses `tools/rclone.exe` on Windows or `tools/rclone` on other supported platforms. Run `tools/rclone.exe --config rclone.conf listremotes` to see the account remotes, then `tools/rclone.exe --config rclone.conf lsf REMOTE: --files-only` to list one account without downloading files. Keep `rclone.conf` private; rclone's obscured passwords are reversible.
-
-### Format
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip ca-certificates libnss3 libgbm1 libgtk-3-0 libasound2
+git clone https://github.com/lttkiet/py_mega_account_generator.git
+cd py_mega_account_generator
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
 ```
-{"email": "*******@*******.com", "emailPassword": "*****", "password": "*********"}
+
+Check `python3 --version` before installing: it must be 3.10 or newer. Chrome may need further system libraries; [Chrome's Linux troubleshooting guide](https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#chrome-doesnt-launch-on-linux) lists them. On Ubuntu releases with restrictive AppArmor rules, the current browser launcher does not configure a sandbox workaround.
+
+## Quickstart
+
+There is no separate sign-in or API key setup. From the repository root, run:
+
+```powershell
+.\.venv\Scripts\python.exe main.py
 ```
-The `emailPassword` represents the password used to create the [mail.tm](https://mail.tm) account.\
-If you want to login to the MEGA account later on, you have to use the `email` and `password` fields.
 
-### Custom format
-If you want to change the format of the credentials file, you can do so by changing the `accountFormat` variable in the `config.json` file.
-Use the following variables to change the format:
-- `{email}` - The email used to create the MEGA account.
-- `{emailPassword}` - The password used to create the mail.tm account.
-- `{password}` - The password used to create the MEGA account.
+On Ubuntu, use `./.venv/bin/python main.py`. The tool creates a temporary email address, registers and confirms a MEGA account, prints the credentials, saves a JSON file under `credentials/`, and creates its remote in `rclone.conf`. It downloads Chrome for Testing and rclone on their first use. Keep the saved credentials and `rclone.conf` private; rclone's obscured passwords are reversible.
 
-For example, if you want to change the format to the following:
+## Command syntax
+
+This is a flat CLI: it has options but no commands or subcommands.
+
+```text
+python main.py [(-f | --file) <path>] [(-p | --public)] [(-l | --loop) <count>]
+python main.py (-ka | --keepalive) [(-v | --verbose)]
+python main.py (-e | --extract)
+python main.py (-h | --help)
 ```
-example@example.com#password
+
+`<param>` is required when its flag is used, `[param]` is optional, `(-f | --file)` shows alternate spellings of one flag, and `...` means multiple values where a command supports them. This CLI has no multi-value argument.
+
+| Flag | Effect |
+| --- | --- |
+| `-f`, `--file <path>` | Upload an existing, nonempty file smaller than 20 GB to the new account. |
+| `-p`, `--public` | Print a public link for the uploaded file. Requires `--file`. |
+| `-l`, `--loop <count>` | Create `<count>` accounts; count must be at least 1. |
+| `-ka`, `--keepalive` | Log in to all saved accounts. |
+| `-v`, `--verbose` | Show storage quota during keepalive. Requires `--keepalive`. |
+| `-e`, `--extract` | Write saved credentials to `credentials.txt` using the configured format. |
+
+`--extract` and `--keepalive` cannot be combined with each other or with registration, upload, or loop options. If MEGA denies a public link after its sharing warning, the upload and credentials stay saved for review.
+
+## Configuration and saved files
+
+The tool creates `config.json` in the current directory on first run. To customize credential exports, set `accountFormat`, for example:
+
+```json
+{"accountFormat": "{email}#{password}"}
 ```
-Then you would change the `accountFormat` variable to `{email}#{password}`, this will append credentials to a file called `accounts.txt` in the credentials folder while retaining JSON files for keepalive and extraction.
-If you change the `accountFormat` variable to `""`, then it will use the default JSON file format and create a new file for every account.
 
-## Arguments
-> [!WARNING]  
-> Do not use the arguments in the **Services** section together with the file upload arguments.
+Available placeholders are `{email}`, `{emailPassword}` (the temporary mail account password), and `{password}` (the MEGA password). The default `accountFormat` is an empty string: accounts are still saved as separate JSON files. A nonempty value also appends to `credentials/accounts.txt` when an account is created. `--extract` uses `{email}#{password}` when `accountFormat` is empty.
 
-`-f filename, --file filename` | Uploads a file to the generated account.\
-`-p, --public` | Generates a shareable link to the file. \
-`-l int, --loop int` | Loops the script x amount of times.
+For this setting, precedence is **local `config.json` > built-in default**. There is no CLI flag or application environment variable for `accountFormat`. The legacy `executablePath` field may be present in `config.json`, but registration always uses the managed browser in `tools/browser`; that field is ignored. CLI flags select the operation and do not override configuration values.
 
-### Services
+| Path | Contents |
+| --- | --- |
+| `credentials/*.json` | One saved credential record per account. |
+| `credentials/accounts.txt` | Appended custom-format records when `accountFormat` is nonempty. |
+| `credentials.txt` | Output of `--extract`. |
+| `rclone.conf` | A MEGA remote for each saved account. |
+| `files.csv` | Successful uploads: UTC time, filename, source path, and account email. |
+| `tools/` | Downloaded browser and rclone binaries; browser profiles are temporary. |
 
-`-e, --extract` | Compiles all credentials outputted as .json to a single file given the custom format.\
-`-ka, --keepalive` | Logs into the accounts to keep them alive.\
-`-v, --verbose` | Shows storage left while using keepalive function.
+These local files are ignored by Git. Run from the repository root so `config.json`, `credentials/`, `credentials.txt`, and `files.csv` are read and written in the expected place.
+
+## Common workflows
+
+The following commands use PowerShell after the Windows installation above.
+
+### Upload a file and get a link
+
+```powershell
+Set-Content -LiteralPath .\example.txt -Value 'MEGA upload test'
+.\.venv\Scripts\python.exe main.py --file .\example.txt --public
+```
+
+The upload is recorded in `files.csv` with the account email even if public-link creation is denied.
+
+### Create three accounts, then check them
+
+```powershell
+.\.venv\Scripts\python.exe main.py --loop 3
+.\.venv\Scripts\python.exe main.py --keepalive --verbose
+```
+
+### Export and inspect saved account data
+
+```powershell
+.\.venv\Scripts\python.exe main.py --extract
+Get-ChildItem .\credentials\*.json | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Select-Object email
+Import-Csv .\files.csv | Select-Object file_name, account_email | Format-Table
+```
+
+The last command needs at least one successful upload. The JSON pipeline displays account emails without printing passwords.
+
+### Verify files in MEGA without downloading them
+
+After saving an account, list its rclone remotes and then list filenames from one remote:
+
+```powershell
+.\tools\rclone.exe --config .\rclone.conf listremotes
+$remote = .\tools\rclone.exe --config .\rclone.conf listremotes | Select-Object -First 1
+.\tools\rclone.exe --config .\rclone.conf lsf $remote --files-only
+```
+
+Each remote has a `mega_` prefix and an account-specific hash. Choose a different line from `listremotes` to inspect another account. `lsf` lists cloud contents; it does not download file data. On Ubuntu, replace `.\tools\rclone.exe` with `./tools/rclone` and use the same rclone arguments.
 
 ## Tests
 
-```sh
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
-ruff check .
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\ruff.exe check .
 ```
